@@ -1,0 +1,5 @@
+#for security reason we avoid environment variables publishing
+*.env
+
+#node modules are too much heavy 
+/node_modules/
