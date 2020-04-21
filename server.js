@@ -5,17 +5,14 @@ const bodyParser=require('body-parser');
 const {check,validationResult}=require('express-validator');
 const mysql=require('mysql');
 const bcrypt=require('bcrypt');
+const saltRounds = 10;
 const app=express();
 const {generateCode} = require('./actions');
-require('dotenv').config()
 
-//to define elsewhere
-process.env.SENDEREMAIL="liburialgaius@gmail.com";
-process.env.SENDERPASSWORD="libure123";
-//
+require('dotenv').config();
 
-let code;
-
+//test with many users
+let codes=[];
 const transporter= nodemailer.createTransport({
     service:'gmail',
     secure:true,
@@ -28,26 +25,11 @@ const transporter= nodemailer.createTransport({
     }
 });
 
-// let transporter = nodemailer.createTransport({
-//     host: 'smtp.gmail.com',
-//     port: 465,
-//     secure: true,
-//     auth: {
-//         type: 'OAuth2',
-//         user: 'liburialgaius@gmail.com',
-//         clientId: '146877350313-e3nss0abbgqcf71p93e87qik56cj8cl1.apps.googleusercontent.com',
-//         clientSecret: 'jzY1Gadain1IKX-u_r9E0YK8'
-//     },
-//     tls: {
-//         rejectUnauthorized: false
-//     }
-// });
-// const jsonParser=bodyParser.json();
-// const urlEncodedParser=bodyParser.urlencoded({extended:false});
+
 
 app.use(bodyParser.json());
 app.use(bodyParser.urlencoded({extended:false}));
-
+// we will use pooling connection in the future(to improve performances) 
 const connection=mysql.createConnection({
     host:'localhost',
     user:'root',
@@ -60,8 +42,30 @@ connection.connect((err)=>{
     else    console.log('connected as id ' + connection.threadId);
 });
 
-app.post('/login',(req,res)=>{
-    res.sendStatus(200);
+app.post('/login',[check('email','The given email is not valid!').isEmail(),
+check('password','The password field must be filled').not().isEmpty()],(request,response)=>{
+    const errors=validationResult(request);
+	if(errors.errors.length>0){
+        response.status(400).send(errors.mapped());
+    }else{
+        
+        connection.query(`select id,password,username from user where email=?`,[request.body.email],(err,res)=>{
+            if(err) throw err;
+            else{
+                if(res.length>0){
+                    if(bcrypt.compareSync(request.body.password, res[0].password)){
+                        const userData={id:res[0].id,username:res[0].username,email:request.body.email,password:request.body.password};
+                        handleCodeGeneration(120000,request.body.email);
+                        response.status(200).send(userData);
+                    }else
+                        response.status(500).send({globalError:{msg:'Invalid Password!'}});
+                    
+                }else
+                    response.status(500).send({globalError:{msg:'Unknown Account!'}});
+            }
+         }
+        );
+    }
 });
 
 app.post('/signup',[check('username','The name is required!').not().isEmpty(),
@@ -71,49 +75,96 @@ check('password','The password size must be at least equal to 6').isLength({min:
 	if(errors.errors.length>0)
         response.status(400).send(errors.mapped());
     else{
-        const userData={username:request.body.username,email:request.body.email,password:request.body.password};
-        connection.query(`select id from user where username=? OR email=?`,[userData.username,userData.email],(err,res)=>{
-            if(err) throw err;
-            else{
-                if(res.length>0)
-                    response.status(500).send({globalError:{msg:'Username or Email already existing!'}});
+        if(request.body.password!=request.body.rpassword){
+            response.status(400).send({globalError:{msg:'Password fields must match!'}});
+        }else{
+            const userData={username:request.body.username,email:request.body.email,password:request.body.password};
+            connection.query(`select id from user where username=? OR email=?`,[userData.username,userData.email],(err,res)=>{
+                if(err) throw err;
                 else{
-                    handleCodeGeneration(30000);
-                    response.status(200).send(userData);
+                    if(res.length>0)
+                        response.status(500).send({globalError:{msg:'Username or Email already existing!'}});
+                    else{
+                        handleCodeGeneration(120000,"liburialgaius@gmail.com");
+                        response.status(200).send(userData.email);
+                    }
                 }
-                    // connection.query(`insert into user SET ?`,userData,(err,res)=>{
-                    //     if(err) throw err;
-                    //     response.status(200).send(userData);
-                    // }
-                    // );
             }
-         }
-        );
+            );
+        }
     }
     
 });
 
-app.post('/verification',(req,res)=>{
-    //req.body.userData
+app.post('/changepass',[
+check('password','The password size must be at least equal to 6').isLength({min:6})],(request,response)=>{
+    const errors=validationResult(request);
+	if(errors.errors.length>0)
+        response.status(400).send(errors.mapped());
+    else{
+        if(request.body.password!=request.body.rpassword)
+            response.status(400).send({globalError:{msg:'Password fields must match!'}});
+        else{
+            const hashpass = bcrypt.hashSync(request.body.password, saltRounds);
+            connection.query('UPDATE user SET password= ? WHERE email = ?', [hashpass, request.body.email], function (error, results, fields) {
+                if (error) throw error;
+                response.status(200).send({email:request.body.email,password:hashpass});
+            });
+        }
+    }
     
-    res.status(200).send(code);
 });
 
-app.post('/resendcode',(req,res)=>{
-    //req.body.userData
-    handleCodeGeneration(120000);
-    res.status(200).send(code);
-    // res.sendStatus(200);
+app.post('/verification',(request,response)=>{
+    const ind=codes.findIndex(e=>e.email===request.body.userData.email);
+
+    if(request.body.code===codes[ind].value){
+        if(!codes[ind].expired)
+            switch(request.body.optype){
+                case 'signup':
+                    const hashpass = bcrypt.hashSync(request.body.userData.password, saltRounds);
+                    const userData={username:request.body.userData.username,email:request.body.userData.email,password:hashpass};
+                    connection.query(`insert into user SET ?`,userData,(err,res)=>{
+                            if(err) throw err;
+                            response.status(200).send({message:'verified',userData:{...userData,id:res.insertId}});
+                        }
+                    );
+                break;
+                case 'login':
+                    response.status(200).send({message:'verified',userData:request.body.userData});
+                break;
+                case 'forgottenpass':
+                    response.status(200).send({message:'verified',userData:request.body.userData});
+                break;
+            }
+        else
+            response.status(200).send({message:'codeexpired',userData:request.body.userData}); 
+
+    }else{
+       response.status(200).send({message:'notverified',userData:request.body.userData});
+    }
 });
 
-function handleCodeGeneration(delay){//in milliseconds
-    code={value:generateCode(),expired:false};
+app.post('/sendcode',(req,res)=>{
+    const code=handleCodeGeneration(120000,req.body.email);
+    res.sendStatus(200);
+});
+
+function handleCodeGeneration(delay,emailTo){//in milliseconds
+    let ind=codes.findIndex(e=>e.email===emailTo);
+    if(ind!=-1)
+        codes=[{value:generateCode(),expired:false,email:emailTo}];
+    else{
+        codes.unshift({value:generateCode(),expired:false,email:emailTo});
+        ind=0;
+    }
+    
     const mail={
-        from: "liburialgaius@gmail.com", // sender address
-        to: "liburialgaius@gmail.com", // list of receivers
+        from: "liburialgaius@gmail.com", // sender address 
+        to: emailTo, // list of receivers
         subject: "Code verification", // Subject line
         // text: "Hello world?", // plain text body
-        html: `Hello! Your verification code is <b>${code.value}</b> ! It will expire in 2 minutes!` // html body
+        html: `Hello! Your verification code is <b>${codes[ind].value}</b> ! It will expire in 2 minutes!` // html body
     };
     let info = transporter.sendMail(mail,(error,info)=>{
         if(error)
@@ -121,7 +172,8 @@ function handleCodeGeneration(delay){//in milliseconds
         else
             console.log('Mail sent successfully!');
     });
-    setTimeout(()=>{code={...code,expired:true}},delay);
+    setTimeout(()=>{codes[ind]={...codes[ind],expired:true}},delay);
+    return codes[ind];
 }
 
 
