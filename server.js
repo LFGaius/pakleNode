@@ -68,13 +68,14 @@ check('password','The password field must be filled').not().isEmpty()],(request,
     }
 });
 
-app.post('/signup',[check('username','The name is required!').not().isEmpty(),
+app.post('/signup',[check('username','The username is required!').not().isEmpty(),
 check('email','The given email is not valid!').isEmail(),
 check('password','The password size must be at least equal to 6').isLength({min:6})],(request,response)=>{
     const errors=validationResult(request);
-	if(errors.errors.length>0)
+	if(errors.errors.length>0){
+        console.log(JSON.stringify(errors.mapped()))
         response.status(400).send(errors.mapped());
-    else{
+    }else{
         if(request.body.password!=request.body.rpassword){
             response.status(400).send({globalError:{msg:'Password fields must match!'}});
         }else{
