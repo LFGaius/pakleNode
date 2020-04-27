@@ -55,8 +55,13 @@ check('password','The password field must be filled').not().isEmpty()],(request,
                 if(res.length>0){
                     if(bcrypt.compareSync(request.body.password, res[0].password)){
                         const userData={id:res[0].id,username:res[0].username,email:request.body.email,password:request.body.password};
-                        handleCodeGeneration(120000,request.body.email);
-                        response.status(200).send(userData);
+                        handleCodeGeneration(120000,request.body.email)
+                        .then(()=>{
+                            response.status(200).send(userData);
+                        })
+                        .catch(()=>{
+                            response.status(500).send({message:'Sending code error!'});
+                        });
                     }else
                         response.status(500).send({globalError:{msg:'Invalid Password!'}});
                     
@@ -73,7 +78,6 @@ check('email','The given email is not valid!').isEmail(),
 check('password','The password size must be at least equal to 6').isLength({min:6})],(request,response)=>{
     const errors=validationResult(request);
 	if(errors.errors.length>0){
-        console.log(JSON.stringify(errors.mapped()))
         response.status(400).send(errors.mapped());
     }else{
         if(request.body.password!=request.body.rpassword){
@@ -86,8 +90,15 @@ check('password','The password size must be at least equal to 6').isLength({min:
                     if(res.length>0)
                         response.status(500).send({globalError:{msg:'Username or Email already existing!'}});
                     else{
-                        handleCodeGeneration(120000,"liburialgaius@gmail.com");
-                        response.status(200).send(userData.email);
+                        handleCodeGeneration(120000,"liburialgaius@gmail.com")
+                        .then(()=>{
+                            console.log('good');
+                            response.sendStatus(200);
+                        })
+                        .catch(()=>{
+                            response.status(500).send({globalError:{msg:'Sending code error!'}});
+                        })
+                            
                     }
                 }
             }
@@ -118,7 +129,7 @@ check('password','The password size must be at least equal to 6').isLength({min:
 
 app.post('/verification',(request,response)=>{
     const ind=codes.findIndex(e=>e.email===request.body.userData.email);
-
+    console.log(JSON.stringify(codes[ind]));
     if(request.body.code===codes[ind].value){
         if(!codes[ind].expired)
             switch(request.body.optype){
@@ -147,14 +158,19 @@ app.post('/verification',(request,response)=>{
 });
 
 app.post('/sendcode',(req,res)=>{
-    const code=handleCodeGeneration(120000,req.body.email);
-    res.sendStatus(200);
+    handleCodeGeneration(120000,req.body.email)
+    .then(()=>{
+        res.sendStatus(200);
+    })
+    .catch(()=>{
+        res.status(500).send({message:'Sending code error!'});
+    });
 });
 
 function handleCodeGeneration(delay,emailTo){//in milliseconds
     let ind=codes.findIndex(e=>e.email===emailTo);
     if(ind!=-1)
-        codes=[{value:generateCode(),expired:false,email:emailTo}];
+        codes[ind]=[{value:generateCode(),expired:false,email:emailTo}];
     else{
         codes.unshift({value:generateCode(),expired:false,email:emailTo});
         ind=0;
@@ -167,14 +183,18 @@ function handleCodeGeneration(delay,emailTo){//in milliseconds
         // text: "Hello world?", // plain text body
         html: `Hello! Your verification code is <b>${codes[ind].value}</b> ! It will expire in 2 minutes!` // html body
     };
-    let info = transporter.sendMail(mail,(error,info)=>{
-        if(error)
-            console.log('Error when sending the mail!'+error);
-        else
-            console.log('Mail sent successfully!');
-    });
-    setTimeout(()=>{codes[ind]={...codes[ind],expired:true}},delay);
-    return codes[ind];
+    return  new Promise((resolve,reject)=>{
+                transporter.sendMail(mail,(error,info)=>{
+                    if(error){
+                        console.log('Error when sending the mail!'+error);
+                        reject();
+                    }else{
+                        console.log('Mail sent successfully! '+JSON.stringify(codes[ind]));
+                        setTimeout(()=>{codes[ind]={...codes[ind],expired:true}},delay);
+                        resolve();
+                    }
+                });
+            });
 }
 
 
