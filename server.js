@@ -82,7 +82,13 @@ app.post('/recoveryinfo',[],(request,response)=>{
             else{
                 if(res.length>0){
                     const userData={username:res[0].username,email:res[0].email};
-                    response.status(200).send(userData); 
+                    handleCodeGeneration(120000,res[0].email)
+                    .then(()=>{
+                        response.status(200).send(userData);
+                    })
+                    .catch(()=>{
+                        response.status(500).send({globalError:{msg:'Sending code error!'}});
+                    });
                 }else
                     response.status(500).send({globalError:{msg:'Unknown Account!'}});
             }
@@ -136,9 +142,10 @@ check('password','The password size must be at least equal to 6').isLength({min:
             response.status(400).send({globalError:{msg:'Password fields must match!'}});
         else{
             const hashpass = bcrypt.hashSync(request.body.password, saltRounds);
-            connection.query('UPDATE user SET password= ? WHERE email = ?', [hashpass, request.body.email], function (error, results, fields) {
+            const userData={email:request.body.email,password:hashpass};
+            connection.query('UPDATE user set password=? WHERE email=?', [hashpass, request.body.email], function (error, results, fields) {
                 if (error) throw error;
-                response.sendStatus(200);
+                response.status(200).send(userData);
             });
         }
     }
@@ -147,7 +154,6 @@ check('password','The password size must be at least equal to 6').isLength({min:
 
 app.post('/verification',(request,response)=>{
     const ind=codes.findIndex(e=>e.email===request.body.userData.email);
-    console.log(JSON.stringify(codes[ind]));
     if(request.body.code===codes[ind].value){
         if(!codes[ind].expired)
             switch(request.body.optype){
@@ -191,11 +197,13 @@ app.post('/sendcode',(req,res)=>{
 function handleCodeGeneration(delay,emailTo){//in milliseconds
     let ind=codes.findIndex(e=>e.email===emailTo);
     if(ind!=-1)
-        codes[ind]=[{value:generateCode(),expired:false,email:emailTo}];
+        codes[ind]={value:generateCode(),expired:false,email:emailTo};
     else{
-        codes.unshift({value:generateCode(),expired:false,email:emailTo});
+        codes=[{value:generateCode(),expired:false,email:emailTo},...codes];
         ind=0;
     }
+
+    console.log(`${codes[ind].value}`);
     
     const mail={
         from: "liburialgaius@gmail.com", // sender address 
@@ -204,18 +212,20 @@ function handleCodeGeneration(delay,emailTo){//in milliseconds
         // text: "Hello world?", // plain text body
         html: `Hello! Your verification code is <b>${codes[ind].value}</b> ! It will expire in 2 minutes!` // html body
     };
-    return  new Promise((resolve,reject)=>{
-                transporter.sendMail(mail,(error,info)=>{
-                    if(error){
-                        console.log('Error when sending the mail!'+error);
-                        reject();
-                    }else{
-                        console.log('Mail sent successfully! '+JSON.stringify(codes[ind]));
-                        setTimeout(()=>{codes[ind]={...codes[ind],expired:true}},delay);
-                        resolve();
-                    }
-                });
-            });
+    setTimeout(()=>{codes[ind]={...codes[ind],expired:true}},delay);
+    return Promise.resolve();//auto resolve promise just for testing
+    // return  new Promise((resolve,reject)=>{
+    //             transporter.sendMail(mail,(error,info)=>{
+    //                 if(error){
+    //                     console.log('Error when sending the mail!'+error);
+    //                     reject();
+    //                 }else{
+    //                     console.log('Mail sent successfully! '+JSON.stringify(codes[ind]));
+    //                     setTimeout(()=>{codes[ind]={...codes[ind],expired:true}},delay);
+    //                     resolve();
+    //                 }
+    //             });
+    //         });
 }
 
 
