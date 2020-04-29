@@ -60,11 +60,29 @@ check('password','The password field must be filled').not().isEmpty()],(request,
                             response.status(200).send(userData);
                         })
                         .catch(()=>{
-                            response.status(500).send({message:'Sending code error!'});
+                            response.status(500).send({globalError:{msg:'Sending code error!'}});
                         });
                     }else
                         response.status(500).send({globalError:{msg:'Invalid Password!'}});
                     
+                }else
+                    response.status(500).send({globalError:{msg:'Unknown Account!'}});
+            }
+         }
+        );
+    }
+});
+
+app.post('/recoveryinfo',[],(request,response)=>{
+	if(request.body.info=='' || !request.body.info){
+        response.status(400).send({globalError:{msg:'The field must be defined!'}});
+    }else{
+        connection.query(`select username,email from user where email=? OR username=?`,[request.body.info,request.body.info],(err,res)=>{
+            if(err) throw err;
+            else{
+                if(res.length>0){
+                    const userData={username:res[0].username,email:res[0].email};
+                    response.status(200).send(userData); 
                 }else
                     response.status(500).send({globalError:{msg:'Unknown Account!'}});
             }
@@ -120,7 +138,7 @@ check('password','The password size must be at least equal to 6').isLength({min:
             const hashpass = bcrypt.hashSync(request.body.password, saltRounds);
             connection.query('UPDATE user SET password= ? WHERE email = ?', [hashpass, request.body.email], function (error, results, fields) {
                 if (error) throw error;
-                response.status(200).send({email:request.body.email,password:hashpass});
+                response.sendStatus(200);
             });
         }
     }
@@ -148,6 +166,9 @@ app.post('/verification',(request,response)=>{
                 case 'forgottenpass':
                     response.status(200).send({message:'verified',userData:request.body.userData});
                 break;
+                case 'recoveryinfo':
+                    response.status(200).send({message:'verified',userData:request.body.userData});
+                break;
             }
         else
             response.status(200).send({message:'codeexpired',userData:request.body.userData}); 
@@ -163,7 +184,7 @@ app.post('/sendcode',(req,res)=>{
         res.sendStatus(200);
     })
     .catch(()=>{
-        res.status(500).send({message:'Sending code error!'});
+        res.sendStatus(500);
     });
 });
 
